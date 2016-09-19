@@ -1,0 +1,11 @@
+[package]
+name = "polyminis-server"
+version = "0.1.0"
+authors = ["Ricardo Sisnett<sisnett@polyminis.com>"]
+
+[dependencies]
+rustful = "0.9"
+polyminis-core = { git = "https://github.com/mrjackinc/polyminis-core" }
+
+log = "0.3.6"
+env_logger = "0.3.2"
