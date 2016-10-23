@@ -11,13 +11,12 @@ use polyminis_core::control::*;
 use polyminis_core::environment::*;
 use polyminis_core::morphology::*;
 use polyminis_core::polymini::*;
-use polyminis_core::species::*;
 use polyminis_core::serialization::*;
+use polyminis_core::species::*;
 
 #[macro_use]
 extern crate log;
 extern crate env_logger;
-
 
 use std::sync::{Arc, RwLock};
 use std::{thread, time};
@@ -35,9 +34,128 @@ struct ServiceMemory
 }
 
 
+
+mod State
+{
+    use std::sync::{Arc, RwLock};
+    use std::{thread, time};
+    use polyminis_core::control::*;
+    use polyminis_core::environment::*;
+    use polyminis_core::morphology::*;
+    use polyminis_core::polymini::*;
+    use polyminis_core::serialization::*;
+    use polyminis_core::species::*;
+
+    struct WorkerThreadState
+    {
+        kill: bool,
+        steps: Vec<String>,
+        static_state: String,
+    }
+    impl WorkerThreadState
+    {
+        fn new() -> WorkerThreadState
+        {
+            WorkerThreadState { kill: false, steps: vec![], static_state: "".to_string() }
+        }
+    
+        fn worker_thread_main(workspace: Arc<RwLock<WorkerThreadState>>)
+        { 
+            let mut sim = Simulation::new();
+
+            // Critical Section
+            {
+                let mut w = workspace.write().unwrap();
+                w.static_state = sim.serialize(&mut SerializationCtx::new_from_flags(PolyminiSerializationFlags::PM_SF_STATIC)).to_string();
+            }
+            
+            while true
+            {
+                sim.step();
+                // Critical Section
+                {
+                    let mut w = workspace.write().unwrap();
+    
+                    if w.kill
+                    {
+                        break;
+                    }
+    
+                    let step_string = sim.serialize(&mut SerializationCtx::new_from_flags(PolyminiSerializationFlags::PM_SF_DYNAMIC)).to_string();
+                    w.steps.push(step_string);
+                }
+            }
+        }
+    }
+
+    struct SimulationState
+    {
+        static_state: Option<String>,
+        work_thread_state: Arc<RwLock<WorkerThreadState>>,
+    }
+    impl SimulationState
+    {
+        pub fn get_static_state(&self) -> &Option<String>
+        {
+            &self.static_state
+        }
+        pub fn get_or_cache_static_state(&mut self) -> &Option<String>
+        {
+            match self.static_state
+            {
+                Some(_) => {}, 
+                None =>
+                {
+                    //  TODO: Go and get static data from the Simulation
+                    let w = self.work_thread_state.read().unwrap();
+                    self.static_state = Some(w.static_state.clone());
+                }
+            }
+            &self.static_state
+        }
+    }
+
+    struct ServerState
+    {
+        simulations: Vec<SimulationState>,
+    }
+
+    impl ServerState
+    {
+        pub fn add_simulation(&mut self/* Data ? */ )
+        {
+
+            let workspace = Arc::new(RwLock::new(WorkerThreadState::new()));
+
+            let simulation_state = SimulationState { static_state: None,
+                                                     work_thread_state: workspace.clone() };
+            self.simulations.push(simulation_state);
+
+            let thread_copy = workspace.clone();
+            thread::spawn(move ||
+            { 
+                WorkerThreadState::worker_thread_main(thread_copy);
+            });
+        }
+    }
+}
+
+
+mod EndpointHandlers 
+{
+    enum Simulation
+    {}
+
+    enum Management
+    {}
+}
+
+
+
+
 fn main()
 {
-    let shared_space = Arc::new(RwLock::new(ServiceMemory { simulations: vec![ SimulationMemory { steps: vec![] }]}));
+    let mut shared_space = Arc::new(RwLock::new(ServiceMemory { simulations: vec![ SimulationMemory { steps: vec![] }]}));
 
 
     let thread_copy = shared_space.clone();
@@ -55,7 +173,7 @@ fn main()
         for _ in 0..10
         {
             s.step();
-            let step_string = format!("{}", s.serialize(&mut SerializationCtx::new()));
+            let step_string = format!("{}", s.serialize(&mut SerializationCtx::new_from_flags(PolyminiSerializationFlags::PM_SF_DYNAMIC)));
 
             // Critical Section
             {
