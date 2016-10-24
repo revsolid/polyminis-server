@@ -7,13 +7,6 @@ use std::error::Error;
 
 use rustful::{Context, Handler, Response, Server, TreeRouter};
 
-use polyminis_core::control::*;
-use polyminis_core::environment::*;
-use polyminis_core::morphology::*;
-use polyminis_core::polymini::*;
-use polyminis_core::serialization::*;
-use polyminis_core::species::*;
-
 #[macro_use]
 extern crate log;
 extern crate env_logger;
@@ -35,7 +28,7 @@ struct ServiceMemory
 
 
 
-mod State
+mod polymini_server_state 
 {
     use std::sync::{Arc, RwLock};
     use std::{thread, time};
@@ -46,7 +39,7 @@ mod State
     use polyminis_core::serialization::*;
     use polyminis_core::species::*;
 
-    struct WorkerThreadState
+    pub struct WorkerThreadState
     {
         kill: bool,
         steps: Vec<String>,
@@ -61,7 +54,16 @@ mod State
     
         fn worker_thread_main(workspace: Arc<RwLock<WorkerThreadState>>)
         { 
+           let chromosomes = vec![[0, 0x09, 0x6A, 0xAD],
+                                  [0, 0x0B, 0xBE, 0xDA],
+                                  [0,    0, 0xBE, 0xEF],
+                                  [0,    0, 0xDB, 0xAD]];
+
+            let p1 = Polymini::new(Morphology::new(chromosomes, &TranslationTable::new()),
+                                   Control::new());
             let mut sim = Simulation::new();
+            sim.add_species(Species::new(vec![p1]));
+            sim.add_object((10.0, 2.0), (1, 1));
 
             // Critical Section
             {
@@ -69,6 +71,7 @@ mod State
                 w.static_state = sim.serialize(&mut SerializationCtx::new_from_flags(PolyminiSerializationFlags::PM_SF_STATIC)).to_string();
             }
             
+            //TODO: Maybe some set of stopping criteria
             while true
             {
                 sim.step();
@@ -84,11 +87,15 @@ mod State
                     let step_string = sim.serialize(&mut SerializationCtx::new_from_flags(PolyminiSerializationFlags::PM_SF_DYNAMIC)).to_string();
                     w.steps.push(step_string);
                 }
+
+                let five_s = time::Duration::from_millis(5000);
+                thread::sleep(five_s); 
             }
         }
     }
 
-    struct SimulationState
+    #[derive(Clone)]
+    pub struct SimulationState
     {
         static_state: Option<String>,
         work_thread_state: Arc<RwLock<WorkerThreadState>>,
@@ -106,23 +113,39 @@ mod State
                 Some(_) => {}, 
                 None =>
                 {
-                    //  TODO: Go and get static data from the Simulation
                     let w = self.work_thread_state.read().unwrap();
                     self.static_state = Some(w.static_state.clone());
                 }
             }
             &self.static_state
         }
+        pub fn get_dynamic_state(&self) -> Vec<String>
+        {
+            let result: Vec<String>;
+
+            // Critical Section
+            {
+                let ws = self.work_thread_state.read().unwrap();
+                result = ws.steps.clone();
+            }
+
+            result
+        }
     }
 
-    struct ServerState
+    #[derive(Clone)]
+    pub struct ServerState
     {
-        simulations: Vec<SimulationState>,
+        pub simulations: Vec<SimulationState>,
     }
-
     impl ServerState
     {
-        pub fn add_simulation(&mut self/* Data ? */ )
+        pub fn new() -> ServerState
+        {
+            ServerState { simulations: vec![] }
+        }
+
+        pub fn add_simulation(&mut self)
         {
 
             let workspace = Arc::new(RwLock::new(WorkerThreadState::new()));
@@ -137,55 +160,170 @@ mod State
                 WorkerThreadState::worker_thread_main(thread_copy);
             });
         }
+
+        pub fn get_simulation_state_by_inx(&self, i: usize) -> (String, Vec<String>)
+        {
+            if  i < self.simulations.len()
+            {
+                (self.simulations[i].get_static_state().clone().unwrap(), self.simulations[i].get_dynamic_state())
+            }
+            else
+            {
+                ("".to_string(), vec![])
+            }
+        }
     }
 }
 
 
-mod EndpointHandlers 
+mod polymini_server_endpoints 
 {
-    enum Simulation
-    {}
+    use rustful::{Context, Handler, Response, Server, TreeRouter};
+    use ::polymini_server_state::{ServerState, SimulationState};
 
-    enum Management
-    {}
+    pub enum Endpoint
+    {
+        Simulation(Simulation),
+        Management(Management),
+    }
+    impl Handler for Endpoint
+    {
+        fn handle_request(&self, context: Context, mut response: Response)
+        {
+            match *self
+            {
+                Endpoint::Simulation(ref simEndpoint) => { simEndpoint.handle_request(context, response); },
+                Endpoint::Management(ref mgtEndpoint) => { mgtEndpoint.handle_request(context, response); },
+            }
+        }
+    }
+
+    pub enum Simulation
+    {
+        SimulationStateAll         { s: ServerState },
+        SimulationStateOne         { s: ServerState },
+
+            EpochStateAll          { s: ServerState },
+            EpochStateOne          { s: ServerState },
+
+                StepStateAll       { s: ServerState },
+                StepStateOne       { s: ServerState },
+    }
+    impl Handler for Simulation
+    {
+        fn handle_request(&self, context: Context, mut response: Response)
+        {
+
+            let mut simulation_num = None;
+            if let Some(simnumber) = context.variables.get("simnumber")
+            {
+                let sim_num_result = usize::from_str_radix(&simnumber, 10);
+                match sim_num_result
+                {
+                    Ok (sim_num) =>
+                    {
+                        simulation_num = Some(sim_num);
+                    },
+                    Err(e) =>
+                    {
+                        response.send(format!("{:?}", e));
+                        return
+                    }
+                }
+            }
+
+            let mut step_num = None;
+            if let Some(step) = context.variables.get("step")
+            {
+                let step_inx_result = usize::from_str_radix(&step, 10);
+                match step_inx_result
+                {
+                    Ok(s_inx) =>
+                    {
+                        step_num = Some(s_inx);
+                    },
+                    Err(e) =>
+                    {
+                        response.send(format!("{:?}", e));
+                        return
+                    }
+                }
+            }
+
+
+            match *self
+            {
+                //TODO:
+                Simulation::SimulationStateAll {ref s } => {},
+                Simulation::SimulationStateOne { ref s } => {},
+                Simulation::EpochStateAll {ref s } => {},
+                Simulation::EpochStateOne { ref s } => {},
+                //~TODO:
+                
+                Simulation::StepStateAll { ref s } =>
+                {
+                    if let Some(sim_num) = simulation_num
+                    {
+                        let sim = &s.simulations[sim_num];
+                        let mut simulation_dump: String = "".to_string();
+                        for ss in &sim.get_dynamic_state()
+                        {
+                            simulation_dump = simulation_dump + ss;
+                        }
+                        response.send(simulation_dump);
+                    }
+                },
+                Simulation::StepStateOne { ref s } =>
+                {
+                    if let Some(sim_num) = simulation_num
+                    {
+                        let sim = &s.simulations[sim_num];
+                        let steps = sim.get_dynamic_state();
+
+                        if let Some(step_n) = step_num
+                        {
+                            if steps.len() < step_n
+                            {
+                                response.send(format!("Step {} not ready", step_n));
+                            }
+                            else
+                            {
+                                let step_string = sim.get_dynamic_state()[step_n - 1].clone();
+                                response.send(step_string);
+                            }
+                        }
+                    }
+                },
+            }
+        }
+    }
+
+    pub enum Management
+    {
+        Ping {}
+    }
+    impl Handler for Management
+    {
+        fn handle_request(&self, context: Context, mut response: Response)
+        {
+            match *self
+            {
+                _ => { response.send("MGMT PING"); }
+            }
+        }
+    }
 }
-
-
 
 
 fn main()
 {
-    let mut shared_space = Arc::new(RwLock::new(ServiceMemory { simulations: vec![ SimulationMemory { steps: vec![] }]}));
+    use ::polymini_server_state::*;
+    use ::polymini_server_endpoints::*;
 
+    let mut ss = ServerState::new();
 
-    let thread_copy = shared_space.clone();
-    thread::spawn(move || {
-        let chromosomes = vec![[0, 0x09, 0x6A, 0xAD],
-                               [0, 0x0B, 0xBE, 0xDA],
-                               [0,    0, 0xBE, 0xEF],
-                               [0,    0, 0xDB, 0xAD]];
+    ss.add_simulation();
 
-        let p1 = Polymini::new(Morphology::new(chromosomes, &TranslationTable::new()),
-                               Control::new());
-        let mut s = Simulation::new();
-        s.add_species(Species::new(vec![p1]));
-        s.add_object((10.0, 2.0), (1, 1));
-        for _ in 0..10
-        {
-            s.step();
-            let step_string = format!("{}", s.serialize(&mut SerializationCtx::new_from_flags(PolyminiSerializationFlags::PM_SF_DYNAMIC)));
-
-            // Critical Section
-            {
-                let mut service_mem = thread_copy.write().unwrap();
-                service_mem.simulations[0].steps.push(step_string);
-            }
-
-            let five_s = time::Duration::from_millis(5000);
-            thread::sleep(five_s); 
-        }
-
-    });
 
     //Build and run the server.
     let server_result = Server {
@@ -197,18 +335,33 @@ fn main()
         {
             TreeRouter::new() =>
             {
-                //Root
-                Get: Api::TestEmpty,
-
-                //Simulation API
-                "simulation" => Get: Api::TestSim
+                Get: Endpoint::Management(Management::Ping{}),
+                "simulations" =>
                 {
-                    service_memory: shared_space.clone()
-                },
-
-                "simulation/:step" => Get: Api::TestSim
-                {
-                    service_memory: shared_space.clone()
+                    Get: Endpoint::Simulation(Simulation::SimulationStateAll { s: ss.clone() }),
+                    ":simnumber" =>
+                    {
+                        Get: Endpoint::Simulation(Simulation::SimulationStateOne { s: ss.clone() }),
+                        "epochs" =>
+                        {
+                            Get: Endpoint::Simulation(Simulation::EpochStateAll { s: ss.clone() }),
+                            ":epoch" => 
+                            {
+                                Get: Endpoint::Simulation(Simulation::EpochStateOne { s: ss.clone() }),
+                                "steps" =>
+                                {
+                                    Get: Endpoint::Simulation(Simulation::StepStateAll{ s: ss.clone() }),
+                                    ":step" => Get: Endpoint::Simulation(Simulation::StepStateOne{ s: ss.clone() }),
+                                },
+                                /* TODO:
+                                "species" => {}
+                                */
+                            }
+                        },
+                        /* TODO:
+                        "environment" => {}
+                        */
+                    }
                 }
             }
         },
@@ -241,54 +394,7 @@ impl Handler for Api
     {
         match *self
         {
-            
-            Api::TestSim { ref service_memory } =>
-            {
-                let ro_mem = service_memory.read().unwrap();
-                if ro_mem.simulations.len() >  0
-                {
-                    if let Some(step) = context.variables.get("step")
-                    {
-                        let step_inx_result = usize::from_str_radix(&step, 10);
-                        match step_inx_result
-                        {
-                            Ok(s_inx) =>
-                            {
-                                if ro_mem.simulations[0].steps.len() < s_inx
-                                {
-                                    response.send(format!("Step {} not ready", s_inx))
-                                }
-                                else
-                                {
-                                    let step_string = ro_mem.simulations[0].steps[s_inx - 1].clone();
-                                    response.send(step_string)
-                                }
-                            },
-                            Err(e) =>
-                            {
-                                response.send(format!("{:?}", e))
-                            }
-                        }
-                    }
-                    else
-                    {
-                        let mut simulation_dump: String = "".to_string();
-                        for ss in &ro_mem.simulations[0].steps
-                        {
-                            simulation_dump = simulation_dump + ss;
-                        }
-                        response.send(simulation_dump);
-                    }
-                }
-                else
-                {
-                    response.send("No Simulation Data available")
-                }
-            },
-            Api::TestEmpty =>
-            {
-                response.send("fuck you")
-            },
+            _ => {},
         };
     }
 }
