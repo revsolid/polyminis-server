@@ -21,14 +21,14 @@ struct SimulationMemory
 }
 
 // This names are terrible (TODO)
-struct ServiceMemory 
+struct ServiceMemory
 {
     simulations: Vec<SimulationMemory>
 }
 
 
 
-mod polymini_server_state 
+mod polymini_server_state
 {
     use std::sync::{Arc, RwLock};
     use std::{thread, time};
@@ -51,9 +51,9 @@ mod polymini_server_state
         {
             WorkerThreadState { kill: false, steps: vec![], static_state: "".to_string() }
         }
-    
+
         fn worker_thread_main(workspace: Arc<RwLock<WorkerThreadState>>)
-        { 
+        {
            let chromosomes = vec![[0, 0x09, 0x6A, 0xAD],
                                   [0, 0x0B, 0xBE, 0xDA],
                                   [0,    0, 0xBE, 0xEF],
@@ -70,7 +70,7 @@ mod polymini_server_state
                 let mut w = workspace.write().unwrap();
                 w.static_state = sim.serialize(&mut SerializationCtx::new_from_flags(PolyminiSerializationFlags::PM_SF_STATIC)).to_string();
             }
-            
+
             //TODO: Maybe some set of stopping criteria
             while true
             {
@@ -78,18 +78,18 @@ mod polymini_server_state
                 // Critical Section
                 {
                     let mut w = workspace.write().unwrap();
-    
+
                     if w.kill
                     {
                         break;
                     }
-    
+
                     let step_string = sim.serialize(&mut SerializationCtx::new_from_flags(PolyminiSerializationFlags::PM_SF_DYNAMIC)).to_string();
                     w.steps.push(step_string);
                 }
 
                 let five_s = time::Duration::from_millis(5000);
-                thread::sleep(five_s); 
+                thread::sleep(five_s);
             }
         }
     }
@@ -110,7 +110,7 @@ mod polymini_server_state
         {
             match self.static_state
             {
-                Some(_) => {}, 
+                Some(_) => {},
                 None =>
                 {
                     let w = self.work_thread_state.read().unwrap();
@@ -156,7 +156,7 @@ mod polymini_server_state
 
             let thread_copy = workspace.clone();
             thread::spawn(move ||
-            { 
+            {
                 WorkerThreadState::worker_thread_main(thread_copy);
             });
         }
@@ -176,10 +176,60 @@ mod polymini_server_state
 }
 
 
-mod polymini_server_endpoints 
+mod polymini_server_endpoints
 {
     use rustful::{Context, Handler, Response, Server, TreeRouter};
     use ::polymini_server_state::{ServerState, SimulationState};
+
+    #[derive(Debug, Clone, Copy)]
+    enum Error
+    {
+        NotFound,
+        InternalServerError,
+    }
+
+    struct EndpointHelper;
+    impl EndpointHelper
+    {
+        //TODO: Maybe make it templatized?
+        pub fn get_usize_var(context: &Context,name: &str) -> Option<usize>
+        {
+            if let Some(number) = context.variables.get(name)
+            {
+                let num_result = usize::from_str_radix(&number, 10);
+                match num_result
+                {
+                    Ok (r) =>
+                    {
+                        Some(r)
+                    },
+                    Err(e) =>
+                    {
+                        None
+                    }
+                }
+            }
+            else
+            {
+                None
+            }
+        }
+
+        pub fn send_error(err: Error, mut response: Response)
+        {
+            match err
+            {
+                Error::NotFound =>
+                {
+                    response.send("Error Not Found");
+                },
+                Error::InternalServerError =>
+                {
+                    response.send("Internal Error");
+                },
+            }
+        }
+    }
 
     pub enum Endpoint
     {
@@ -209,91 +259,98 @@ mod polymini_server_endpoints
                 StepStateAll       { s: ServerState },
                 StepStateOne       { s: ServerState },
     }
+
     impl Handler for Simulation
     {
         fn handle_request(&self, context: Context, mut response: Response)
         {
 
-            let mut simulation_num = None;
-            if let Some(simnumber) = context.variables.get("simnumber")
-            {
-                let sim_num_result = usize::from_str_radix(&simnumber, 10);
-                match sim_num_result
-                {
-                    Ok (sim_num) =>
-                    {
-                        simulation_num = Some(sim_num);
-                    },
-                    Err(e) =>
-                    {
-                        response.send(format!("{:?}", e));
-                        return
-                    }
-                }
-            }
-
-            let mut step_num = None;
-            if let Some(step) = context.variables.get("step")
-            {
-                let step_inx_result = usize::from_str_radix(&step, 10);
-                match step_inx_result
-                {
-                    Ok(s_inx) =>
-                    {
-                        step_num = Some(s_inx);
-                    },
-                    Err(e) =>
-                    {
-                        response.send(format!("{:?}", e));
-                        return
-                    }
-                }
-            }
-
+            let simulation_num = EndpointHelper::get_usize_var(&context, "simnumber");
+            let epoch_num = EndpointHelper::get_usize_var(&context, "epoch");
+            let step_num = EndpointHelper::get_usize_var(&context, "step");
 
             match *self
             {
                 //TODO:
-                Simulation::SimulationStateAll {ref s } => {},
-                Simulation::SimulationStateOne { ref s } => {},
-                Simulation::EpochStateAll {ref s } => {},
-                Simulation::EpochStateOne { ref s } => {},
+                Simulation::SimulationStateAll {ref s } => { return; },
+                Simulation::SimulationStateOne { ref s } => { return; },
+                _ => {},
                 //~TODO:
-                
+            }
+
+
+            let mut simulation_index = match simulation_num
+            {
+                Some(s_i) => { s_i }
+                None =>  {  EndpointHelper::send_error(Error::InternalServerError, response); return; unreachable!(); }
+            };
+
+            match *self
+            {
+                Simulation::EpochStateAll {ref s } =>
+                {
+                    return;
+                },
+
+                Simulation::EpochStateOne { ref s } =>
+                {
+                    if let Some(e_num) = epoch_num
+                    {
+
+                    }
+                    else
+                    {
+                        EndpointHelper::send_error(Error::NotFound, response);
+                    }
+                    return;
+                },
+                _ => {},
+            }
+
+            let mut epoch = match epoch_num
+            {
+                Some(e_n) => { e_n }
+                None =>  {  EndpointHelper::send_error(Error::InternalServerError, response); return; unreachable!(); }
+            };
+
+
+            match *self
+            {
                 Simulation::StepStateAll { ref s } =>
                 {
-                    if let Some(sim_num) = simulation_num
+                    let sim = &s.simulations[simulation_index];
+                    let static_str = sim.get_static_state().clone().unwrap_or_else( || {"".to_owned()});
+                    let mut simulation_dump: String = "".to_owned();
+                    simulation_dump = simulation_dump + &static_str;
+                    for ss in &sim.get_dynamic_state()
                     {
-                        let sim = &s.simulations[sim_num];
-                        let mut simulation_dump: String = "".to_string();
-                        for ss in &sim.get_dynamic_state()
-                        {
-                            simulation_dump = simulation_dump + ss;
-                        }
-                        response.send(simulation_dump);
+                        simulation_dump = simulation_dump + ss;
                     }
+                    response.send(simulation_dump);
                 },
                 Simulation::StepStateOne { ref s } =>
                 {
-                    if let Some(sim_num) = simulation_num
+                    if let Some(step_n) = step_num
                     {
-                        let sim = &s.simulations[sim_num];
+                        let sim = &s.simulations[simulation_index];
                         let steps = sim.get_dynamic_state();
-
-                        if let Some(step_n) = step_num
+                        if steps.len() < step_n
                         {
-                            if steps.len() < step_n
-                            {
-                                response.send(format!("Step {} not ready", step_n));
-                            }
-                            else
-                            {
-                                let step_string = sim.get_dynamic_state()[step_n - 1].clone();
-                                response.send(step_string);
-                            }
+                            response.send("Simulation step not ready yet");
+                        }
+                        else
+                        {
+                            let step_string = sim.get_dynamic_state()[step_n - 1].clone();
+                            response.send(step_string);
                         }
                     }
+                    else
+                    {
+                        EndpointHelper::send_error(Error::NotFound, response);
+                    }
+                    return;
                 },
+                _ => {}
             }
         }
     }
@@ -345,7 +402,7 @@ fn main()
                         "epochs" =>
                         {
                             Get: Endpoint::Simulation(Simulation::EpochStateAll { s: ss.clone() }),
-                            ":epoch" => 
+                            ":epoch" =>
                             {
                                 Get: Endpoint::Simulation(Simulation::EpochStateOne { s: ss.clone() }),
                                 "steps" =>
@@ -374,7 +431,7 @@ fn main()
     {
         Ok(_server) => {},
         Err(e) => error!("could not start server: {}", e.description())
-    } 
+    }
 }
 
 
