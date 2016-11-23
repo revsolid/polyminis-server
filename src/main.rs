@@ -97,27 +97,29 @@ mod polymini_server_state
     #[derive(Clone)]
     pub struct SimulationState
     {
-        static_state: Option<String>,
+        static_state: String,
         work_thread_state: Arc<RwLock<WorkerThreadState>>,
     }
     impl SimulationState
     {
-        pub fn get_static_state(&self) -> &Option<String>
+        pub fn new(worker_thread_state: &Arc<RwLock<WorkerThreadState>>) -> SimulationState
         {
-            &self.static_state
-        }
-        pub fn get_or_cache_static_state(&mut self) -> &Option<String>
-        {
-            match self.static_state
+            let wt = worker_thread_state.clone(); 
+            let ss;
             {
-                Some(_) => {},
-                None =>
-                {
-                    let w = self.work_thread_state.read().unwrap();
-                    self.static_state = Some(w.static_state.clone());
-                }
+                let w = wt.read().unwrap();
+                ss = w.static_state.clone();
             }
-            &self.static_state
+            SimulationState { static_state: ss, work_thread_state: wt }
+        }
+        pub fn get_static_state(&self) -> String
+        {
+            let result: String;
+            {
+                let ws = self.work_thread_state.read().unwrap();
+                result = ws.static_state.clone();
+            }
+            result.to_owned()
         }
         pub fn get_dynamic_state(&self) -> Vec<String>
         {
@@ -150,8 +152,8 @@ mod polymini_server_state
 
             let workspace = Arc::new(RwLock::new(WorkerThreadState::new()));
 
-            let simulation_state = SimulationState { static_state: None,
-                                                     work_thread_state: workspace.clone() };
+            let mut simulation_state = SimulationState::new(&workspace);
+
             self.simulations.push(simulation_state);
 
             let thread_copy = workspace.clone();
@@ -165,7 +167,7 @@ mod polymini_server_state
         {
             if  i < self.simulations.len()
             {
-                (self.simulations[i].get_static_state().clone().unwrap(), self.simulations[i].get_dynamic_state())
+                (self.simulations[i].get_static_state().clone(), self.simulations[i].get_dynamic_state())
             }
             else
             {
@@ -319,7 +321,7 @@ mod polymini_server_endpoints
                 Simulation::StepStateAll { ref s } =>
                 {
                     let sim = &s.simulations[simulation_index];
-                    let static_str = sim.get_static_state().clone().unwrap_or_else( || {"".to_owned()});
+                    let static_str = sim.get_static_state().clone();
                     let mut simulation_dump: String = "".to_owned();
                     simulation_dump = simulation_dump + &static_str;
                     for ss in &sim.get_dynamic_state()
@@ -431,27 +433,5 @@ fn main()
     {
         Ok(_server) => {},
         Err(e) => error!("could not start server: {}", e.description())
-    }
-}
-
-
-//TODO: This might be better off somewhere else
-// On a separate note, this is an AMAZING way of doing variable binding :O
-enum Api
-{
-    TestSim
-    {
-        service_memory: Arc<RwLock<ServiceMemory>>
-    },
-    TestEmpty
-}
-impl Handler for Api
-{
-    fn handle_request(&self, context: Context, mut response: Response)
-    {
-        match *self
-        {
-            _ => {},
-        };
     }
 }
