@@ -75,7 +75,10 @@ mod polymini_server_state
             let evaluators = vec![ FitnessEvaluator::OverallMovement,
                                    FitnessEvaluator::DistanceTravelled,
                                    FitnessEvaluator::Shape,
-                                   FitnessEvaluator::Alive, ];
+                                   FitnessEvaluator::Alive,
+                                   FitnessEvaluator::TargetPosition((1.0, 1.0)),
+                                   FitnessEvaluator::TargetPosition((1.0, 1.0)), // NOTE: Cheap man's weights
+                                   ];
 
             let translation_table_species_1 = TranslationTable::new_from(&master_translation_table, &active_table_1);
             let translation_table_species_2 = TranslationTable::new_from(&master_translation_table, &active_table_2);
@@ -117,7 +120,14 @@ mod polymini_server_state
             {
                 {
                     let mut w = workspace.write().unwrap();
-                    w.epochs.push(EpochState::new(i));
+                    let mut epoch_state = EpochState::new(i);
+
+                    for s in sim.get_epoch().get_species() 
+                    {
+                        epoch_state.species.push(s.serialize(&mut SerializationCtx::new_from_flags(PolyminiSerializationFlags::PM_SF_STATIC)));
+                    }
+                    
+                    w.epochs.push(epoch_state);
                 }
                 loop
                 {
@@ -170,6 +180,7 @@ mod polymini_server_state
     {
         epoch_num: usize,
         steps: pmJsonArray,
+        species: pmJsonArray,
         evaluated: bool,
         evaluation_data: pmJsonObject,
     }
@@ -177,7 +188,7 @@ mod polymini_server_state
     {
         pub fn new(i: usize) -> EpochState
         {
-            EpochState { epoch_num: i, steps: pmJsonArray::new(), evaluated: false, evaluation_data: pmJsonObject::new() }
+            EpochState { epoch_num: i, steps: pmJsonArray::new(),  species: pmJsonArray::new(), evaluated: false, evaluation_data: pmJsonObject::new(),}
         }
         pub fn serialize(&self) -> Json
         {
@@ -240,6 +251,21 @@ mod polymini_server_state
                 json = ws.epochs[e].serialize();
             }
             json
+        }
+
+        pub fn serialize_species_all(&self, e: usize) -> Json
+        {
+            let mut json_obj = pmJsonObject::new();
+            let mut json_arr = pmJsonArray::new();
+            {
+                let ws = self.work_thread_state.read().unwrap();
+                for s in &ws.epochs[e].species
+                {
+                    json_arr.push(s.clone());
+                }
+            }
+            json_obj.insert("Species".to_owned(), Json::Array(json_arr));
+            Json::Object(json_obj)
         }
 
         pub fn serialize_step_all(&self, e: usize) -> Json
@@ -388,6 +414,9 @@ mod polymini_server_endpoints
 
                 StepStateAll       { s: ServerState },
                 StepStateOne       { s: ServerState },
+
+                SpeciesInEpoch     { s: ServerState },
+                SpeciesInEpochOne  { s: ServerState },
     }
 
     impl Handler for Simulation
@@ -469,6 +498,21 @@ mod polymini_server_endpoints
             };
 
 
+
+            match *self
+            {
+                Simulation::SpeciesInEpoch { ref s } =>
+                {
+                    let sim = &s.simulations[simulation_index];
+                    response.send(sim.serialize_species_all(epoch).to_string());
+                    return;
+                },
+                Simulation::SpeciesInEpochOne { ref s } =>
+                {
+                },
+                _ => {}
+            }
+
             match *self
             {
                 Simulation::StepStateAll { ref s } =>
@@ -492,6 +536,7 @@ mod polymini_server_endpoints
                 },
                 _ => {}
             }
+
         }
     }
 
@@ -518,6 +563,8 @@ fn main()
     use ::polymini_server_endpoints::*;
 
     let mut ss = ServerState::new();
+    let _ = env_logger::init();
+
 
     ss.add_simulation();
 
@@ -550,9 +597,11 @@ fn main()
                                     Get: Endpoint::Simulation(Simulation::StepStateAll{ s: ss.clone() }),
                                     ":step" => Get: Endpoint::Simulation(Simulation::StepStateOne{ s: ss.clone() }),
                                 },
-                                /* TODO:
-                                "species" => {}
-                                */
+                                "species" =>
+                                {
+                                    Get: Endpoint::Simulation( Simulation::SpeciesInEpoch  { s: ss.clone() } ),
+                                    ":species" => Get: Endpoint::Simulation( Simulation::SpeciesInEpochOne { s: ss.clone() }),
+                                }
                             }
                         },
                         /* TODO:
