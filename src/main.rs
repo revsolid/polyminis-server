@@ -31,6 +31,7 @@ mod polymini_server_state
     use polyminis_core::simulation::*;
     use polyminis_core::species::*;
     use polyminis_core::traits::*;
+    use ::env_logger;
 
     pub struct WorkerThreadState
     {
@@ -52,11 +53,15 @@ mod polymini_server_state
             let mut sim = Simulation::new(); 
             let mut master_translation_table = HashMap::new();
 
-            master_translation_table.insert( (TraitTier::TierI, 1), PolyminiTrait::PolyminiSimpleTrait(PolyminiSimpleTrait::SpeedTrait));
-            master_translation_table.insert( (TraitTier::TierI, 2), PolyminiTrait::PolyminiActuator(ActuatorTag::MoveHorizontal));
+            master_translation_table.insert( (TraitTier::TierI, 2), PolyminiTrait::PolyminiSimpleTrait(PolyminiSimpleTrait::SpeedTrait));
+            master_translation_table.insert( (TraitTier::TierI, 1), PolyminiTrait::PolyminiActuator(ActuatorTag::MoveHorizontal));
             master_translation_table.insert( (TraitTier::TierI, 3), PolyminiTrait::PolyminiActuator(ActuatorTag::MoveVertical));
+            master_translation_table.insert( (TraitTier::TierI, 4), PolyminiTrait::PolyminiActuator(ActuatorTag::MoveHorizontal));
+            master_translation_table.insert( (TraitTier::TierI, 5), PolyminiTrait::PolyminiActuator(ActuatorTag::MoveVertical));
 
             let mut active_table_1 = HashSet::new();
+            active_table_1.insert( (TraitTier::TierI, 5) );
+            active_table_1.insert( (TraitTier::TierI, 4) );
             active_table_1.insert( (TraitTier::TierI, 3) );
             active_table_1.insert( (TraitTier::TierI, 2) );
             active_table_1.insert( (TraitTier::TierI, 1) );
@@ -72,79 +77,96 @@ mod polymini_server_state
                                         Sensor::new(SensorTag::Orientation, 1),
                                         Sensor::new(SensorTag::LastMoveSucceded, 1)];
 
-            let evaluators = vec![ FitnessEvaluator::OverallMovement,
-                                   FitnessEvaluator::DistanceTravelled,
-                                   FitnessEvaluator::Shape,
-                                   FitnessEvaluator::Alive,
-                                   FitnessEvaluator::TargetPosition((1.0, 1.0)),
-                                   FitnessEvaluator::TargetPosition((1.0, 1.0)), // NOTE: Cheap man's weights
+            let evaluators = vec![ FitnessEvaluator::OverallMovement { weight: 0.5 },
+                                   FitnessEvaluator::DistanceTravelled { weight: 2.0 },
+                                   FitnessEvaluator::Shape { weight: 15.0 },
+                                   FitnessEvaluator::Alive { weight: 15.0 },
+                                   FitnessEvaluator::PositionsVisited { weight: 5.0 },
+                                   FitnessEvaluator::TargetPosition { weight: 15.0, pos: (0.8, 0.8) },
+                                
                                    ];
 
             let translation_table_species_1 = TranslationTable::new_from(&master_translation_table, &active_table_1);
             let translation_table_species_2 = TranslationTable::new_from(&master_translation_table, &active_table_2);
-            let translation_table_species_3 = TranslationTable::new_from(&master_translation_table, &active_table_2);
 
 
-            let env = Environment::new(2, default_sensors);
+            let mut env = Environment::new(2, default_sensors);
+
+
+            env.add_static_object((0.0, 0.0),  (100, 1));
+            env.add_static_object((0.0, 0.0),  (1, 100));
+            env.add_static_object((99.0, 0.0), (1, 100));
+            env.add_static_object((0.0, 99.0), (100, 1));
+            env.add_object(WorldObject::new_static_object((50.0, 15.0), (5, 10)));
+            env.add_object(WorldObject::new_static_object((50.0, 45.0), (5, 10)));
+            env.add_object(WorldObject::new_static_object((50.0, 75.0), (5, 10)));
+            env.add_object(WorldObject::new_static_object((15.0, 50.0), (10, 5)));
+            env.add_object(WorldObject::new_static_object((45.0, 50.0), (10, 5)));
+            env.add_object(WorldObject::new_static_object((75.0, 50.0), (10, 5)));
 
             let gens_per_epoch = 100;
 
             let cfg = PGAConfig { max_generations: gens_per_epoch, population_size: 50,
-                                  percentage_elitism: 0.2, percentage_mutation: 0.1, fitness_evaluators: evaluators, genome_size: 8 };
+                                  percentage_elitism: 0.2, percentage_mutation: 0.25, fitness_evaluators: evaluators, genome_size: 8 };
 
             trace!("Creating Species");
             let s1 = Species::new_from("Test Species 1".to_owned(), translation_table_species_1,
-                                       &env.default_sensors, cfg.clone());
+                                       &env.default_sensors, cfg.clone(),
+                                       Box::new(| ctx: &mut PolyminiRandomCtx |
+                                       {
+                                           ((ctx.gen_range(0.0, 45.0) as f32).floor(),
+                                            (ctx.gen_range(0.0, 45.0) as f32).floor())
+                                       }));
+            //let s2 = Species::new_from("Test Species 2".to_owned(), translation_table_species_2,
+            //                           &env.default_sensors, cfg.clone());
 
-
-            let s2 = Species::new_from("Test Species 2".to_owned(), translation_table_species_2,
-                                       &env.default_sensors, cfg.clone());
-
-
-            let s3 = Species::new_from("Test Species 3".to_owned(), translation_table_species_3,
-                                       &env.default_sensors, cfg.clone());
 
             trace!("Adding Species");
-            let mut epoch = SimulationEpoch::new_with(env, gens_per_epoch as usize);
+            let mut epoch = SimulationEpoch::new_restartable(env, gens_per_epoch as usize, 1);
             epoch.add_species(s1);
-            epoch.add_species(s2);
-            epoch.add_species(s3);
+            //epoch.add_species(s2);
             
             trace!("Swaping Species:");
             sim.swap_epoch(epoch);
 
-            let total_epochs = 20;
+            let total_epochs = 150;
 
             let mut kill = false;
+            let mut logger;
+            logger = env_logger::init();
             'outer: for i in 0..total_epochs
             {
+
                 {
                     let mut w = workspace.write().unwrap();
                     let mut epoch_state = EpochState::new(i);
+                    let mut ctx = SerializationCtx::new_from_flags(PolyminiSerializationFlags::PM_SF_STATIC);
 
                     for s in sim.get_epoch().get_species() 
                     {
-                        epoch_state.species.push(s.serialize(&mut SerializationCtx::new_from_flags(PolyminiSerializationFlags::PM_SF_STATIC)));
+                        epoch_state.species.push(s.serialize(&mut ctx));
                     }
                     
+                    let mut env_obj = pmJsonObject::new();
+                    env_obj.insert("Environment".to_owned(), sim.get_epoch().get_environment().serialize(&mut ctx));
+                    epoch_state.environment = env_obj;
                     w.epochs.push(epoch_state);
                 }
                 loop
                 {
-                    if !sim.step()
+                    let break_loop = sim.step();
+                    let mut w = workspace.write().unwrap();
+
+                    if w.kill
                     {
-                        let mut w = workspace.write().unwrap();
-
-                        if w.kill
-                        {
-                            kill = true;
-                            break 'outer;
-                        }
-
-                        let step_json = sim.get_epoch().serialize(&mut SerializationCtx::new_from_flags(PolyminiSerializationFlags::PM_SF_DYNAMIC));
-                        w.epochs[i].steps.push(step_json);
+                        kill = true;
+                        break 'outer;
                     }
-                    else
+
+                    let step_json = sim.get_epoch().serialize(&mut SerializationCtx::new_from_flags(PolyminiSerializationFlags::PM_SF_DYNAMIC));
+                    w.epochs[i].steps.push(step_json);
+
+                    if break_loop
                     {
                         break;
                     }
@@ -160,6 +182,8 @@ mod polymini_server_state
                         w.epochs[i].evaluation_data.insert(s.get_name().clone(), s.get_best().serialize(&mut SerializationCtx::new_from_flags(PolyminiSerializationFlags::PM_SF_STATS)));
                     }
                 }
+
+
 
                 if i < total_epochs - 1
                 {
@@ -183,12 +207,14 @@ mod polymini_server_state
         species: pmJsonArray,
         evaluated: bool,
         evaluation_data: pmJsonObject,
+        environment: pmJsonObject,
     }
     impl EpochState
     {
         pub fn new(i: usize) -> EpochState
         {
-            EpochState { epoch_num: i, steps: pmJsonArray::new(),  species: pmJsonArray::new(), evaluated: false, evaluation_data: pmJsonObject::new(),}
+            EpochState { epoch_num: i, steps: pmJsonArray::new(),  species: pmJsonArray::new(), evaluated: false, evaluation_data: pmJsonObject::new(),
+                         environment: pmJsonObject::new() }
         }
         pub fn serialize(&self) -> Json
         {
@@ -268,8 +294,19 @@ mod polymini_server_state
             Json::Object(json_obj)
         }
 
+        pub fn serialize_environment(&self, e: usize) -> Json
+        {
+            let json;
+            {
+                let ws = self.work_thread_state.read().unwrap();
+                json = ws.epochs[e].environment.clone();
+            }
+            Json::Object(json)
+        }
+
         pub fn serialize_step_all(&self, e: usize) -> Json
         {
+            let mut json_obj = pmJsonObject::new();
             let mut json_arr = pmJsonArray::new();
             {
                 let ws = self.work_thread_state.read().unwrap();
@@ -278,7 +315,8 @@ mod polymini_server_state
                     json_arr.push(s.clone());
                 }
             }
-            Json::Array(json_arr)
+            json_obj.insert("Steps".to_owned(), Json::Array(json_arr));
+            Json::Object(json_obj)
 
         }
         pub fn serialize_step(&self, e: usize, s: usize) -> Json
@@ -417,6 +455,8 @@ mod polymini_server_endpoints
 
                 SpeciesInEpoch     { s: ServerState },
                 SpeciesInEpochOne  { s: ServerState },
+
+                EnvironmentInEpoch { s: ServerState },
     }
 
     impl Handler for Simulation
@@ -430,7 +470,6 @@ mod polymini_server_endpoints
 
             match *self
             {
-                //TODO:
                 Simulation::SimulationStateAll {ref s } =>
                 {
                     // This should return information about all
@@ -453,7 +492,6 @@ mod polymini_server_endpoints
                     return;
                 },
                 _ => {},
-                //~TODO:
             }
 
 
@@ -494,7 +532,7 @@ mod polymini_server_endpoints
             let mut epoch = match epoch_num
             {
                 Some(e_n) => { e_n }
-                None =>  {  EndpointHelper::send_error(Error::InternalServerError, response); return; unreachable!(); }
+                None =>  {  EndpointHelper::send_error(Error::InternalServerError, response); return; }
             };
 
 
@@ -509,6 +547,12 @@ mod polymini_server_endpoints
                 },
                 Simulation::SpeciesInEpochOne { ref s } =>
                 {
+                },
+                Simulation::EnvironmentInEpoch { ref s } =>
+                {
+                    let sim = &s.simulations[simulation_index]; 
+                    response.send(sim.serialize_environment(epoch).to_string());
+                    return;
                 },
                 _ => {}
             }
@@ -563,7 +607,6 @@ fn main()
     use ::polymini_server_endpoints::*;
 
     let mut ss = ServerState::new();
-    let _ = env_logger::init();
 
 
     ss.add_simulation();
@@ -601,12 +644,13 @@ fn main()
                                 {
                                     Get: Endpoint::Simulation( Simulation::SpeciesInEpoch  { s: ss.clone() } ),
                                     ":species" => Get: Endpoint::Simulation( Simulation::SpeciesInEpochOne { s: ss.clone() }),
+                                },
+                                "environment" =>
+                                {
+                                    Get: Endpoint::Simulation( Simulation::EnvironmentInEpoch { s: ss.clone() } ),
                                 }
                             }
                         },
-                        /* TODO:
-                        "environment" => {}
-                        */
                     }
                 }
             }
