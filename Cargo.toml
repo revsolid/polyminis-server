@@ -5,7 +5,7 @@ authors = ["Ricardo Sisnett<sisnett@polyminis.com>"]
 
 [dependencies]
 rustful = "0.9"
-polyminis-core = { git = "https://github.com/mrjackinc/polyminis-core" }
+polyminis-core = { git = "https://github.com/mrjackinc/polyminis-core", branch = "full_integration" }
 
 log = "0.3.6"
 env_logger = "0.3.2"
