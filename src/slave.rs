@@ -65,7 +65,7 @@ impl WorkerThreadActions
                 let record_for_database = true;
                 let record_for_simulation = true;
 
-                trace!("Something Something Static Data");
+                trace!("Recording Static Data");
                 {
                     let mut w = workspace.write().unwrap();
                     let mut epoch_state = EpochState::new(sim.epoch_num);
@@ -101,7 +101,7 @@ impl WorkerThreadActions
                     if break_loop
                     {
                         trace!("Ending Simulation");
-                        break;
+                        break 'epoch;
                     }
                 }
 

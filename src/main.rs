@@ -103,6 +103,7 @@ mod polymini_server_state
             let mut json_arr = pmJsonArray::new();
             {
                 let mut ws = self.work_thread_state.write().unwrap();
+                trace!("XXX");
                 for s in &ws.epochs.get_mut(&(e as u32)).unwrap().steps
                 {
                     json_arr.push(s.clone());
@@ -122,12 +123,41 @@ mod polymini_server_state
             json
         }
 
+        pub fn serialize_persistent_data(&self, e: usize) -> Json
+        {
+            let json;
+            {
+                let mut ws = self.work_thread_state.write().unwrap();
+                json = Json::Object(ws.epochs.get_mut(&(e as u32)).unwrap().persistable_data.clone());
+            }
+            json
+        }
+
+        pub fn serialize_persistent_data_species(&self, e: usize) -> Json
+        {
+            let json;
+            {
+                let mut ws = self.work_thread_state.write().unwrap();
+                json = Json::Object(ws.epochs.get_mut(&(e as u32)).unwrap().persistable_species_data.clone());
+            }
+            json
+
+        }
+
         pub fn advance(&mut self, data: Json) -> Json
         {
             let mut json_obj = pmJsonObject::new();
             {
                 let mut ws = self.work_thread_state.write().unwrap();
                 ws.actions.push_back(WorkerThreadActions::Advance { simulation_data: data });
+                match ws.thread_hndl
+                {
+                    Some(ref hdl) =>
+                    {
+                        hdl.unpark();
+                    }
+                    None => {}
+                }
             }
             Json::Object(json_obj)
         }
@@ -138,6 +168,14 @@ mod polymini_server_state
             {
                 let mut ws = self.work_thread_state.write().unwrap();
                 ws.actions.push_back(WorkerThreadActions::Simulate { simulation_data: data });
+                match ws.thread_hndl
+                {
+                    Some(ref hdl) =>
+                    {
+                        hdl.unpark();
+                    }
+                    None => {}
+                }
             }
             Json::Object(json_obj)
         }
@@ -438,6 +476,16 @@ mod polymini_server_endpoints
             // /simulations/simulation_num/epochs/epoch_num/db
             match *self
             {
+                Simulation::PersistentDataEpoch { ref s } =>
+                {
+                    let sim = &s.simulations.read().unwrap()[simulation_index];
+                    response.send(sim.serialize_persistent_data(epoch).to_string());
+                },
+                Simulation::PersistentDataSpecies { ref s } =>
+                {
+                    let sim = &s.simulations.read().unwrap()[simulation_index];
+                    response.send(sim.serialize_persistent_data_species(epoch).to_string());
+                },
                 _ => {}
             }
 
@@ -465,11 +513,14 @@ fn main()
     use ::polymini_server_state::*;
     use ::polymini_server_endpoints::*;
 
+    extern crate env_logger;
+
     let mut ss = ServerState::new();
 
 
     ss.add_simulation();
 
+    let _ = env_logger::init();
 
     //Build and run the server.
     let server_result = Server {
@@ -495,6 +546,11 @@ fn main()
                         "epochs" =>
                         {
                             Get: Endpoint::Simulation(Simulation::EpochStateAll { s: ss.clone() }),
+                            /*
+                            "new" =>
+                            {
+                                Post: Endpoint::Simulation(Simulation::NewEpoch { s: ss.clone() }),
+                            },*/
                             "advance" =>
                             {
                                 Post: Endpoint::Simulation(Simulation::AdvanceEpoch { s: ss.clone() }),
