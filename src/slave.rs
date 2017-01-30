@@ -67,7 +67,6 @@ impl WorkerThreadActions
 
                 trace!("Recording Static Data");
                 {
-                    let mut w = workspace.write().unwrap();
                     let mut epoch_state = EpochState::new(sim.epoch_num);
                     let mut ctx = SerializationCtx::new_from_flags(PolyminiSerializationFlags::PM_SF_STATIC);
 
@@ -79,6 +78,8 @@ impl WorkerThreadActions
                     let mut env_obj = pmJsonObject::new();
                     env_obj.insert("Environment".to_owned(), sim.get_epoch().get_environment().serialize(&mut ctx));
                     epoch_state.environment = env_obj;
+
+                    let mut w = workspace.write().unwrap();
                     w.epochs.insert(sim.epoch_num as u32, epoch_state);
                 }
 
@@ -140,13 +141,25 @@ impl WorkerThreadActions
             },
             WorkerThreadActions::Advance{ simulation_data: ref simulation_data } =>
             {
+                trace!("ADVANCE ENDPOINT");
+                trace!("{}", simulation_data.to_string());
+
+                let mut sim_opt = Simulation::new_from_json(&simulation_data); 
+
+                match *simulation_data 
+                {
+                    Json::Object(_) => {},
+                    _ =>  { panic!("WHAT THE FUCK"); }
+                }
+
+
+
                 let mut sim = Simulation::new_from_json(&simulation_data).unwrap(); 
                 // Fil the simulation up with data
                 sim.advance_epoch();
                 {
-                    let mut w = workspace.write().unwrap();
-                    let mut_epoch = w.epochs.get_mut(&(sim.epoch_num as u32)).unwrap();
-                    mut_epoch.persistable_data  = match sim.get_epoch().serialize(&mut SerializationCtx::new_from_flags(PolyminiSerializationFlags::PM_SF_DB))
+                    let mut epoch_state = EpochState::new(sim.epoch_num);
+                    epoch_state.persistable_data  = match sim.get_epoch().serialize(&mut SerializationCtx::new_from_flags(PolyminiSerializationFlags::PM_SF_DB))
                     {
                         Json::Object(data) =>
                         {
@@ -157,8 +170,10 @@ impl WorkerThreadActions
 
                     for s in sim.get_epoch().get_species()
                     {
-                        mut_epoch.persistable_species_data.insert(s.get_name().clone(), s.serialize(&mut SerializationCtx::new_from_flags(PolyminiSerializationFlags::PM_SF_DB)));
+                        epoch_state.persistable_species_data.insert(s.get_name().clone(), s.serialize(&mut SerializationCtx::new_from_flags(PolyminiSerializationFlags::PM_SF_DB)));
                     }
+                    let mut w = workspace.write().unwrap();
+                    w.epochs.insert(sim.epoch_num as u32, epoch_state);
                 }
             },
             _ =>

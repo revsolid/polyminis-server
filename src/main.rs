@@ -546,11 +546,6 @@ fn main()
                         "epochs" =>
                         {
                             Get: Endpoint::Simulation(Simulation::EpochStateAll { s: ss.clone() }),
-                            /*
-                            "new" =>
-                            {
-                                Post: Endpoint::Simulation(Simulation::NewEpoch { s: ss.clone() }),
-                            },*/
                             "advance" =>
                             {
                                 Post: Endpoint::Simulation(Simulation::AdvanceEpoch { s: ss.clone() }),
