@@ -141,18 +141,7 @@ impl WorkerThreadActions
             },
             WorkerThreadActions::Advance{ simulation_data: ref simulation_data } =>
             {
-                trace!("ADVANCE ENDPOINT");
-                trace!("{}", simulation_data.to_string());
-
                 let mut sim_opt = Simulation::new_from_json(&simulation_data); 
-
-                match *simulation_data 
-                {
-                    Json::Object(_) => {},
-                    _ =>  { panic!("WHAT THE FUCK"); }
-                }
-
-
 
                 let mut sim = Simulation::new_from_json(&simulation_data).unwrap(); 
                 // Fil the simulation up with data

@@ -103,7 +103,6 @@ mod polymini_server_state
             let mut json_arr = pmJsonArray::new();
             {
                 let mut ws = self.work_thread_state.write().unwrap();
-                trace!("XXX");
                 for s in &ws.epochs.get_mut(&(e as u32)).unwrap().steps
                 {
                     json_arr.push(s.clone());
@@ -227,6 +226,7 @@ mod polymini_server_endpoints
 {
     use rustful::{Context, Handler, Response, Server, TreeRouter};
     use polymini_server_state::{ServerState, SimulationState};
+    use polyminis_core::serialization::*;
 
     #[derive(Debug, Clone, Copy)]
     enum Error
@@ -358,6 +358,10 @@ mod polymini_server_endpoints
                 {
                     //TODO: Pass data for new simulation
                     s.add_simulation();
+                    let mut json_obj = pmJsonObject::new();
+                    json_obj.insert("SimulationId".to_owned(), Json::U64(s.simulations.read().unwrap().len() as u64 - 1));
+                    response.send(Json::Object(json_obj).to_string());
+                    return
                 }
                 _ => {},
             }
