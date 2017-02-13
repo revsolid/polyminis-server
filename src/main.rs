@@ -5,6 +5,7 @@ extern crate polyminis_core;
 #[macro_use]
 extern crate rustful;
 use rustful::{Context, Handler, Response, Server, TreeRouter};
+use rustful::StatusCode;
 
 extern crate env_logger;
 #[macro_use]
@@ -67,7 +68,17 @@ mod polymini_server_state
             let json;
             {
                 let mut ws = self.work_thread_state.write().unwrap();
-                json = ws.epochs.get_mut(&(e as u32)).unwrap().serialize();
+                json = match ws.epochs.get_mut(&(e as u32))
+                {
+                    Some(ref epoch) =>
+                    {
+                        epoch.serialize()
+                    }
+                    None =>
+                    {
+                        Json::Object(pmJsonObject::new())
+                    }
+                }
             }
             json
         }
@@ -225,6 +236,7 @@ mod polymini_server_state
 mod polymini_server_endpoints
 {
     use rustful::{Context, Handler, Response, Server, TreeRouter};
+    use rustful::StatusCode;
     use polymini_server_state::{ServerState, SimulationState};
     use polyminis_core::serialization::*;
 
@@ -268,10 +280,12 @@ mod polymini_server_endpoints
             {
                 Error::NotFound =>
                 {
+                    response.set_status(StatusCode::NotFound);
                     response.send("Error Not Found");
                 },
                 Error::InternalServerError =>
                 {
+                    response.set_status(StatusCode::InternalServerError);
                     response.send("Internal Error");
                 },
             }
@@ -390,8 +404,16 @@ mod polymini_server_endpoints
                     if let Some(e_num) = epoch_num
                     {
                         let sim = &s.simulations.read().unwrap()[simulation_index];
-                        response.send(sim.serialize_epoch(e_num).to_string());
-                        return;
+                        let res = sim.serialize_epoch(e_num).to_string();
+
+                        if res.len() == 0
+                        {
+                            EndpointHelper::send_error(Error::NotFound, response);
+                        }
+                        else
+                        {
+                            response.send(res);
+                        }
                     }
                     else
                     {
