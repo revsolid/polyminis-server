@@ -5,6 +5,7 @@ extern crate polyminis_core;
 #[macro_use]
 extern crate rustful;
 use rustful::{Context, Handler, Response, Server, TreeRouter};
+use rustful::StatusCode;
 
 extern crate env_logger;
 #[macro_use]
@@ -67,7 +68,17 @@ mod polymini_server_state
             let json;
             {
                 let mut ws = self.work_thread_state.write().unwrap();
-                json = ws.epochs.get_mut(&(e as u32)).unwrap().serialize();
+                json = match ws.epochs.get_mut(&(e as u32))
+                {
+                    Some(ref epoch) =>
+                    {
+                        epoch.serialize()
+                    }
+                    None =>
+                    {
+                        Json::Object(pmJsonObject::new())
+                    }
+                }
             }
             json
         }
@@ -103,7 +114,6 @@ mod polymini_server_state
             let mut json_arr = pmJsonArray::new();
             {
                 let mut ws = self.work_thread_state.write().unwrap();
-                trace!("XXX");
                 for s in &ws.epochs.get_mut(&(e as u32)).unwrap().steps
                 {
                     json_arr.push(s.clone());
@@ -226,7 +236,9 @@ mod polymini_server_state
 mod polymini_server_endpoints
 {
     use rustful::{Context, Handler, Response, Server, TreeRouter};
+    use rustful::StatusCode;
     use polymini_server_state::{ServerState, SimulationState};
+    use polyminis_core::serialization::*;
 
     #[derive(Debug, Clone, Copy)]
     enum Error
@@ -268,10 +280,12 @@ mod polymini_server_endpoints
             {
                 Error::NotFound =>
                 {
+                    response.set_status(StatusCode::NotFound);
                     response.send("Error Not Found");
                 },
                 Error::InternalServerError =>
                 {
+                    response.set_status(StatusCode::InternalServerError);
                     response.send("Internal Error");
                 },
             }
@@ -358,6 +372,10 @@ mod polymini_server_endpoints
                 {
                     //TODO: Pass data for new simulation
                     s.add_simulation();
+                    let mut json_obj = pmJsonObject::new();
+                    json_obj.insert("SimulationId".to_owned(), Json::U64(s.simulations.read().unwrap().len() as u64 - 1));
+                    response.send(Json::Object(json_obj).to_string());
+                    return
                 }
                 _ => {},
             }
@@ -386,8 +404,16 @@ mod polymini_server_endpoints
                     if let Some(e_num) = epoch_num
                     {
                         let sim = &s.simulations.read().unwrap()[simulation_index];
-                        response.send(sim.serialize_epoch(e_num).to_string());
-                        return;
+                        let res = sim.serialize_epoch(e_num).to_string();
+
+                        if res.len() == 0
+                        {
+                            EndpointHelper::send_error(Error::NotFound, response);
+                        }
+                        else
+                        {
+                            response.send(res);
+                        }
                     }
                     else
                     {
@@ -546,11 +572,6 @@ fn main()
                         "epochs" =>
                         {
                             Get: Endpoint::Simulation(Simulation::EpochStateAll { s: ss.clone() }),
-                            /*
-                            "new" =>
-                            {
-                                Post: Endpoint::Simulation(Simulation::NewEpoch { s: ss.clone() }),
-                            },*/
                             "advance" =>
                             {
                                 Post: Endpoint::Simulation(Simulation::AdvanceEpoch { s: ss.clone() }),
