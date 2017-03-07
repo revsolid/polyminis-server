@@ -6,6 +6,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, RwLock};
 use std::thread;
 
+use env_logger;
+
 #[derive(Clone)]
 pub struct EpochState
 {
@@ -48,6 +50,7 @@ pub enum WorkerThreadActions
 }
 impl WorkerThreadActions
 {
+    
     pub fn handle(&self, workspace: &mut Arc<RwLock<WorkerThreadState>>)
     {
         match *self
@@ -63,7 +66,7 @@ impl WorkerThreadActions
 
                 let mut sim = Simulation::new_from_json(&simulation_data).unwrap(); 
                 let record_for_database = true;
-                let record_for_simulation = true;
+                let record_for_playback = true;
 
                 trace!("Recording Static Data");
                 {
@@ -83,28 +86,7 @@ impl WorkerThreadActions
                     w.epochs.insert(sim.epoch_num as u32, epoch_state);
                 }
 
-                trace!("Starting Simulation Loop");
-                'epoch: loop
-                {
-                    let break_loop = sim.step();
-
-
-                    if record_for_simulation
-                    {
-                        trace!("Recording Data for Step");
-                        let step_json = sim.get_epoch().serialize(&mut SerializationCtx::new_from_flags(PolyminiSerializationFlags::PM_SF_DYNAMIC));
-                        {
-                            let mut w = workspace.write().unwrap();
-                            w.epochs.get_mut(&(sim.epoch_num as u32)).unwrap().steps.push(step_json);
-                        }
-                    }
-
-                    if break_loop
-                    {
-                        trace!("Ending Simulation");
-                        break 'epoch;
-                    }
-                }
+                self.SimulationEpochLoop(&mut sim, workspace, record_for_playback, record_for_database); 
 
                 trace!("Evaluating Species");
                 sim.get_epoch_mut().evaluate_species(); 
@@ -170,6 +152,68 @@ impl WorkerThreadActions
             }
         }
     }
+    fn SimulationEpochLoop(&self, sim: &mut Simulation, workspace: &mut Arc<RwLock<WorkerThreadState>>, record_for_playback: bool, record_for_database: bool)
+    {
+        let sim_type = "Legacy Style";
+        trace!("Starting Simulation Epoch Loop"); //TODO: Trace params
+        match sim_type
+        {  
+            // CreatureObservation case: - Select the best (or best few) of each species keep
+            // running indefinetiley (?)
+            //
+            // CreatureDesign case: - Start with a specific Seed and then run the batery of 
+            // scenarios using the provided translation table
+            //
+            // Chronos case - Run the species through a gauntlet of scenarios (Solo Run or 'Legacy'
+            // style)
+            // 
+
+            // Creature Design
+            "Creature Design" =>
+            {
+                // This is basically a Solo Run ?
+            },
+            
+            // Solo Run
+            "Solo Run" =>
+            {
+                // Get Envs and Cofigurations from payload
+                sim.get_epoch_mut().solo_run(&vec![]);
+            }, 
+
+            // Creature Observation
+            "Creature Observation" =>
+            {
+                // This is basically 'legacy' style 
+            },
+
+            // Legacy Sytle 
+            "Legacy Style" =>  
+            {
+                'legacy_style: loop
+                {
+                    let break_loop = sim.step();
+
+
+                    if record_for_playback
+                    {
+                        let step_json = sim.get_epoch().serialize(&mut SerializationCtx::new_from_flags(PolyminiSerializationFlags::PM_SF_DYNAMIC));
+                        {
+                            let mut w = workspace.write().unwrap();
+                            w.epochs.get_mut(&(sim.epoch_num as u32)).unwrap().steps.push(step_json);
+                        }
+                    }
+
+                    if break_loop
+                    {
+                        trace!("Ending Simulation");
+                        break 'legacy_style;
+                    }
+                }
+            },
+            &_ => {}
+        }
+    }
 }
 
 pub struct WorkerThreadState
@@ -190,6 +234,7 @@ impl WorkerThreadState
 
     pub fn worker_thread_main(mut workspace: Arc<RwLock<WorkerThreadState>>)
     {
+        let _ = env_logger::init();
         {
             let mut w = workspace.write().unwrap();
             w.thread_hndl = Some(thread::current())

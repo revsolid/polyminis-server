@@ -17,6 +17,10 @@ pub use std::thread;
 
 mod slave;
 
+macro_rules! error {
+    ($($arg:tt)*) => (println!($($arg)*))
+}
+
 mod polymini_server_state
 {
     extern crate polyminis_core;
@@ -550,8 +554,8 @@ fn main()
 
     //Build and run the server.
     let server_result = Server {
-        //Turn a port number into an IPV4 host address (0.0.0.0:8080 in this case).
-        host: 8080.into(),
+        //Turn a port number into an IPV4 host address (0.0.0.0:8082 in this case).
+        host: 8082.into(),
 
         //Create a TreeRouter and fill it with handlers.
         handlers: insert_routes!
