@@ -142,9 +142,19 @@ mod polymini_server_state
             let json;
             {
                 let mut ws = self.work_thread_state.write().unwrap();
-                json = Json::Object(ws.epochs.get_mut(&(e as u32)).unwrap().persistable_data.clone());
+                json = match ws.epochs.get_mut(&(e as u32))
+                {
+                    Some(epoch) =>
+                    {
+                        epoch.persistable_data.clone()
+                    },
+                    None =>
+                    {
+                        pmJsonObject::new() 
+                    }
+                }
             }
-            json
+            Json::Object(json)
         }
 
         pub fn serialize_persistent_data_species(&self, e: usize) -> Json
@@ -152,10 +162,19 @@ mod polymini_server_state
             let json;
             {
                 let mut ws = self.work_thread_state.write().unwrap();
-                json = Json::Object(ws.epochs.get_mut(&(e as u32)).unwrap().persistable_species_data.clone());
+                json = match ws.epochs.get_mut(&(e as u32))
+                {
+                    Some(epoch) =>
+                    {
+                        epoch.persistable_species_data.clone()
+                    },
+                    None =>
+                    {
+                        pmJsonObject::new() 
+                    }
+                }
             }
-            json
-
+            Json::Object(json)
         }
 
         pub fn advance(&mut self, data: Json) -> Json

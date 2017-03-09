@@ -57,13 +57,30 @@ impl WorkerThreadActions
         {
             WorkerThreadActions::Simulate { simulation_data: ref simulation_data } =>
             {
+                // Avoid loading anything already in memory
+                match simulation_data
+                {
+                    &Json::Object(ref json_obj) =>
+                    {
+                        let mut w = workspace.write().unwrap();
+                        let epoch_num = json_obj.get("EpochNum").unwrap_or(&Json::U64(0)).as_u64().unwrap_or(0);
+                        if w.epochs.get_mut(& (epoch_num as u32)).is_some()
+                        {
+                            // Early break
+                            return
+                        }
+                    },
+                    _ =>
+                    {
+                    }
+                }
 
                 // Simulation Data is:
                 //     Simulation Configuration
                 //     Epoch Data
                 //     Species Data
                 //     //TODO: Right now Epoch Data and Simulation Configuration are a bit coupled
-
+                //
                 let mut sim = Simulation::new_from_json(&simulation_data).unwrap(); 
                 let record_for_database = true;
                 let record_for_playback = true;
@@ -86,7 +103,29 @@ impl WorkerThreadActions
                     w.epochs.insert(sim.epoch_num as u32, epoch_state);
                 }
 
-                self.SimulationEpochLoop(&mut sim, workspace, record_for_playback, record_for_database); 
+                let sim_type = match simulation_data
+                {
+                    &Json::Object(ref json_obj) =>
+                    {
+                        match json_obj.get("SimulationType")
+                        {
+                            None =>
+                            {
+                                "Legacy Style".to_owned()
+                            },
+                            Some(sim_type) =>
+                            {
+                                sim_type.to_string()
+                            }
+                        }
+                    },
+                    _ =>
+                    {
+                        "Legacy Style".to_owned()
+                    }
+                };
+
+                self.SimulationEpochLoop(&mut sim, sim_type, workspace, record_for_playback, record_for_database); 
 
                 trace!("Evaluating Species");
                 sim.get_epoch_mut().evaluate_species(); 
@@ -152,11 +191,11 @@ impl WorkerThreadActions
             }
         }
     }
-    fn SimulationEpochLoop(&self, sim: &mut Simulation, workspace: &mut Arc<RwLock<WorkerThreadState>>, record_for_playback: bool, record_for_database: bool)
+    fn SimulationEpochLoop(&self, sim: &mut Simulation, sim_type: String, workspace: &mut Arc<RwLock<WorkerThreadState>>, record_for_playback: bool, record_for_database: bool)
     {
-        let sim_type = "Legacy Style";
-        trace!("Starting Simulation Epoch Loop"); //TODO: Trace params
-        match sim_type
+        //let sim_type = "Legacy Style";
+        trace!("Starting Simulation Epoch Loop - Type {}", sim_type); //TODO: Trace params
+        match sim_type.as_ref()
         {  
             // CreatureObservation case: - Select the best (or best few) of each species keep
             // running indefinetiley (?)
@@ -177,7 +216,7 @@ impl WorkerThreadActions
             // Solo Run
             "Solo Run" =>
             {
-                // Get Envs and Cofigurations from payload
+                // TODO: For now is ok to send an empty vec
                 sim.get_epoch_mut().solo_run(&vec![]);
             }, 
 
@@ -211,7 +250,10 @@ impl WorkerThreadActions
                     }
                 }
             },
-            &_ => {}
+            &_ =>
+            {
+                trace!("Pretty fucky wtf");
+            }
         }
     }
 }
