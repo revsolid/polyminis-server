@@ -1,4 +1,6 @@
 use lru_cache::LruCache;
+use polyminis_core::evaluation::*;
+use polyminis_core::genetics::*;
 use polyminis_core::serialization::*;
 use polyminis_core::simulation::*;
 
@@ -82,6 +84,13 @@ impl WorkerThreadActions
                 //     //TODO: Right now Epoch Data and Simulation Configuration are a bit coupled
                 //
                 let mut sim = Simulation::new_from_json(&simulation_data).unwrap(); 
+
+                trace!(
+                "Simulation Loaded: {}",
+                sim.get_epoch().get_species().len());
+
+
+
                 let record_for_database = true;
                 let record_for_playback = true;
 
@@ -115,7 +124,7 @@ impl WorkerThreadActions
                             },
                             Some(sim_type) =>
                             {
-                                sim_type.to_string()
+                                sim_type.as_string().unwrap().to_owned()
                             }
                         }
                     },
@@ -216,8 +225,53 @@ impl WorkerThreadActions
             // Solo Run
             "Solo Run" =>
             {
-                // TODO: For now is ok to send an empty vec
-                sim.get_epoch_mut().solo_run(&vec![]);
+                // TODO: For now we'll be using the same setup for all runs,
+                // this should be parameterizable
+                let mut new_env = sim.get_epoch().get_environment().clone();
+                
+                new_env.add_static_object( (20.0, 10.0),  (10, 30));
+                new_env.add_static_object( (10.0, 20.0),  (30, 10));
+
+                let evaluators = vec![ FitnessEvaluator::OverallMovement { weight: 0.5 },
+                                       FitnessEvaluator::DistanceTravelled { weight: 0.5 },
+                                       FitnessEvaluator::Alive { weight: 15.0 },
+                                       FitnessEvaluator::Shape { weight: 8.0 },
+                                       FitnessEvaluator::PositionsVisited { weight: 3.5 },
+                                     ];
+
+                let cfg = PGAConfig { population_size: 50,
+                                      percentage_elitism: 0.20, percentage_mutation: 0.3, fitness_evaluators: evaluators,
+                                      genome_size: 4 };
+
+
+                sim.get_epoch_mut().solo_run(&vec![
+                                    (new_env.clone(), cfg.clone(),
+                                     Box::new( | ctx: &mut PolyminiRandomCtx |
+                                     {
+                                       ( (ctx.gen_range(12.0, 18.0) as f32).floor(),
+                                         (ctx.gen_range(12.0, 18.0) as f32).floor())
+                                     })),
+                                    (new_env.clone(), cfg.clone(),
+                                     Box::new( | ctx: &mut PolyminiRandomCtx |
+                                     {
+                                       ( (ctx.gen_range(32.0, 38.0) as f32).floor(),
+                                         (ctx.gen_range(32.0, 38.0) as f32).floor())
+                                     })),
+                                     (new_env.clone(), cfg.clone(),
+                                     Box::new( | ctx: &mut PolyminiRandomCtx |
+                                     {
+                                       ( (ctx.gen_range(12.0, 18.0) as f32).floor(),
+                                         (ctx.gen_range(32.0, 38.0) as f32).floor())
+                                     })),
+                                     (new_env.clone(), cfg.clone(),
+                                     Box::new( | ctx: &mut PolyminiRandomCtx |
+                                     {
+                                       ( (ctx.gen_range(32.0, 38.0) as f32).floor(),
+                                         (ctx.gen_range(12.0, 18.0) as f32).floor())
+                                     })),
+                                     ]);
+
+                trace!("Done solo running");
             }, 
 
             // Creature Observation
