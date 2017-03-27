@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Ricardo Sisnett<sisnett@polyminis.com>"]
 
 [dependencies]
-polyminis-core = { git = "https://github.com/mrjackinc/polyminis-core", branch = "deserialization" }
+polyminis-core = { path = "polyminis-core" }
 
 env_logger = "0.3.2"
 lru-cache = "0.1.0"
