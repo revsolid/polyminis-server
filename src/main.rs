@@ -551,7 +551,7 @@ fn main()
     //Build and run the server.
     let server_result = Server {
         //Turn a port number into an IPV4 host address (0.0.0.0:8080 in this case).
-        host: 8080.into(),
+        host: 8082.into(),
 
         //Create a TreeRouter and fill it with handlers.
         handlers: insert_routes!

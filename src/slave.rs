@@ -69,10 +69,19 @@ impl WorkerThreadActions
                     {
                         let mut w = workspace.write().unwrap();
                         let epoch_num = json_obj.get("EpochNum").unwrap_or(&Json::U64(0)).as_u64().unwrap_or(0);
-                        if w.epochs.get_mut(& (epoch_num as u32)).is_some()
+                        match w.epochs.get_mut(& (epoch_num as u32))
                         {
-                            // Early break
-                            return
+                            Some(ref epoch_state) =>
+                            {
+                                // Early break
+                                if (epoch_state.evaluated)
+                                {
+                                    trace!("Simulation Epoch Num: {} already simulated...returning", epoch_num);
+                                    return
+                                }
+                            }
+                            _ => 
+                            {}
                         }
                     },
                     _ =>
@@ -274,7 +283,7 @@ impl WorkerThreadActions
 
                             let cfg = PGAConfig { population_size: 50,
                                                   percentage_elitism: 0.20, percentage_mutation: 0.3, fitness_evaluators: evaluators,
-                                                  genome_size: 4 };
+                                                  genome_size: 4, accumulates_over: true };
 
                             vec![
                                 (new_env.clone(), cfg.clone(),
@@ -306,6 +315,7 @@ impl WorkerThreadActions
                     };
 
 
+                trace!("Solo Run includes {} scenarios", scenarios.len());
                 sim.get_epoch_mut().solo_run(&scenarios);
 
 
