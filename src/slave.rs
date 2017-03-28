@@ -1,9 +1,14 @@
 use lru_cache::LruCache;
+<<<<<<< HEAD
 
 use polyminis_core::environment::*;
 use polyminis_core::evaluation::*;
 use polyminis_core::genetics::*;
 use polyminis_core::physics::*;
+=======
+use polyminis_core::evaluation::*;
+use polyminis_core::genetics::*;
+>>>>>>> 80a5c25e99feec41ca69b004677b5a4a536b6fee
 use polyminis_core::serialization::*;
 use polyminis_core::simulation::*;
 
@@ -147,7 +152,6 @@ impl WorkerThreadActions
                 };
 
                 self.SimulationEpochLoop(&mut sim, sim_type, workspace, record_for_playback, record_for_database, simulation_data); 
-                // SimulationEpochLoop (..., simulation_data,...);
 
                 trace!("Evaluating Species");
                 sim.get_epoch_mut().evaluate_species(); 
@@ -213,7 +217,6 @@ impl WorkerThreadActions
             }
         }
     }
-
     //fn SimulationEpochLoop(&self, sim: &mut Simulation, sim_type: String, workspace: &mut Arc<RwLock<WorkerThreadState>>, record_for_playback: bool, record_for_database: bool)
     fn SimulationEpochLoop(&self, sim: &mut Simulation, sim_type: String, workspace: &mut Arc<RwLock<WorkerThreadState>>, record_for_playback: bool, record_for_database: bool,
                            sim_data: &Json)
@@ -243,7 +246,6 @@ impl WorkerThreadActions
             {
                 // TODO: For now we'll be using the same setup for all runs,
                 // this should be parameterizable
-                
                 let scenarios: Vec<(Environment, PGAConfig, Box<PlacementFunction>)> =
                     match sim_data.as_object().unwrap().get("Scenarios")
                     {
@@ -317,7 +319,6 @@ impl WorkerThreadActions
 
                 trace!("Solo Run includes {} scenarios", scenarios.len());
                 sim.get_epoch_mut().solo_run(&scenarios);
-
 
                 trace!("Done solo running");
             }, 
