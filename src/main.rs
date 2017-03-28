@@ -17,13 +17,20 @@ pub use std::thread;
 
 mod slave;
 
+macro_rules! error {
+    ($($arg:tt)*) => (println!($($arg)*))
+}
+
 mod polymini_server_state
 {
     extern crate polyminis_core;
     use super::*;
     use super::slave::*;
 
+    use ::polymini_server_endpoints::{EndpointHelper};
+
     use polyminis_core::serialization::*;
+    use rustful::Response;
 
     #[derive(Clone)]
     pub struct SimulationState
@@ -83,29 +90,50 @@ mod polymini_server_state
             json
         }
 
-        pub fn serialize_species_all(&self, e: usize) -> Json
+        pub fn serialize_species_all(&self, e: usize, mut resp: Response)
         {
             let mut json_obj = pmJsonObject::new();
-            let mut json_arr = pmJsonArray::new();
             {
                 let mut ws = self.work_thread_state.write().unwrap();
-                for s in &ws.epochs.get_mut(&(e as u32)).unwrap().species
+                
+                match ws.epochs.get_mut(&(e as u32)) 
                 {
-                    json_arr.push(s.clone());
+                    Some(ref epoch) =>
+                    {
+                        let mut json_arr = pmJsonArray::new();
+                        for s in &epoch.species
+                        {
+                            json_arr.push(s.clone());
+                        }
+                        json_obj.insert("Species".to_owned(), Json::Array(json_arr));
+                        resp.send(Json::Object(json_obj).to_string());
+                    },
+                    None =>
+                    {
+                        EndpointHelper::send_error(::polymini_server_endpoints::Error::NotFound, resp);
+                    }
                 }
             }
-            json_obj.insert("Species".to_owned(), Json::Array(json_arr));
-            Json::Object(json_obj)
         }
 
-        pub fn serialize_environment(&self, e: usize) -> Json
+        pub fn serialize_environment(&self, e: usize, mut resp: Response)
         {
-            let json;
             {
                 let mut ws = self.work_thread_state.write().unwrap();
-                json = ws.epochs.get_mut(&(e as u32)).unwrap().environment.clone();
+                match ws.epochs.get_mut(&(e as u32)) 
+                {
+                    Some(ref epoch) =>
+                    {
+                        let json;
+                        json = epoch.environment.clone();
+                        resp.send(Json::Object(json).to_string());
+                    },
+                    None =>
+                    {
+                        EndpointHelper::send_error(::polymini_server_endpoints::Error::NotFound, resp);
+                    }
+                }
             }
-            Json::Object(json)
         }
 
         pub fn serialize_step_all(&self, e: usize) -> Json
@@ -138,9 +166,19 @@ mod polymini_server_state
             let json;
             {
                 let mut ws = self.work_thread_state.write().unwrap();
-                json = Json::Object(ws.epochs.get_mut(&(e as u32)).unwrap().persistable_data.clone());
+                json = match ws.epochs.get_mut(&(e as u32))
+                {
+                    Some(epoch) =>
+                    {
+                        epoch.persistable_data.clone()
+                    },
+                    None =>
+                    {
+                        pmJsonObject::new() 
+                    }
+                }
             }
-            json
+            Json::Object(json)
         }
 
         pub fn serialize_persistent_data_species(&self, e: usize) -> Json
@@ -148,10 +186,19 @@ mod polymini_server_state
             let json;
             {
                 let mut ws = self.work_thread_state.write().unwrap();
-                json = Json::Object(ws.epochs.get_mut(&(e as u32)).unwrap().persistable_species_data.clone());
+                json = match ws.epochs.get_mut(&(e as u32))
+                {
+                    Some(epoch) =>
+                    {
+                        epoch.persistable_species_data.clone()
+                    },
+                    None =>
+                    {
+                        pmJsonObject::new() 
+                    }
+                }
             }
-            json
-
+            Json::Object(json)
         }
 
         pub fn advance(&mut self, data: Json) -> Json
@@ -241,13 +288,13 @@ mod polymini_server_endpoints
     use polyminis_core::serialization::*;
 
     #[derive(Debug, Clone, Copy)]
-    enum Error
+    pub enum Error
     {
         NotFound,
         InternalServerError,
     }
 
-    struct EndpointHelper;
+    pub struct EndpointHelper;
     impl EndpointHelper
     {
         //TODO: Maybe make it templatized?
@@ -459,7 +506,7 @@ mod polymini_server_endpoints
                 Simulation::SpeciesInEpoch { ref s } =>
                 {
                     let sim = &s.simulations.read().unwrap()[simulation_index];
-                    response.send(sim.serialize_species_all(epoch).to_string());
+                    sim.serialize_species_all(epoch, response);
                     return;
                 },
                 Simulation::SpeciesInEpochOne { ref s } =>
@@ -468,7 +515,7 @@ mod polymini_server_endpoints
                 Simulation::EnvironmentInEpoch { ref s } =>
                 {
                     let sim = &s.simulations.read().unwrap()[simulation_index]; 
-                    response.send(sim.serialize_environment(epoch).to_string());
+                    sim.serialize_environment(epoch, response);
                     return;
                 },
                 _ => {}
@@ -550,8 +597,8 @@ fn main()
 
     //Build and run the server.
     let server_result = Server {
-        //Turn a port number into an IPV4 host address (0.0.0.0:8080 in this case).
-        host: 8080.into(),
+        //Turn a port number into an IPV4 host address (0.0.0.0:8082 in this case).
+        host: 8082.into(),
 
         //Create a TreeRouter and fill it with handlers.
         handlers: insert_routes!
