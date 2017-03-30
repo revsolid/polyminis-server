@@ -1,14 +1,9 @@
 use lru_cache::LruCache;
-<<<<<<< HEAD
 
 use polyminis_core::environment::*;
 use polyminis_core::evaluation::*;
 use polyminis_core::genetics::*;
 use polyminis_core::physics::*;
-=======
-use polyminis_core::evaluation::*;
-use polyminis_core::genetics::*;
->>>>>>> 80a5c25e99feec41ca69b004677b5a4a536b6fee
 use polyminis_core::serialization::*;
 use polyminis_core::simulation::*;
 
@@ -326,7 +321,27 @@ impl WorkerThreadActions
             // Creature Observation
             "Creature Observation" =>
             {
-                // This is basically 'legacy' style 
+                'creature_obs: loop
+                {
+                    let break_loop = sim.step();
+
+
+                    if record_for_playback
+                    {
+                        let step_json = sim.get_epoch().serialize(&mut SerializationCtx::new_from_flags(PolyminiSerializationFlags::PM_SF_DYNAMIC));
+                        {
+                            let mut w = workspace.write().unwrap();
+                            w.epochs.get_mut(&(sim.epoch_num as u32)).unwrap().steps.push(step_json);
+                        }
+                    }
+
+                    if break_loop
+                    {
+                        trace!("Ending Simulation");
+                        break 'creature_obs;
+                    }
+                }
+
             },
 
             // Legacy Sytle 
