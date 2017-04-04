@@ -68,13 +68,14 @@ impl WorkerThreadActions
                     &Json::Object(ref json_obj) =>
                     {
                         let mut w = workspace.write().unwrap();
-                        let epoch_num = json_obj.get("EpochNum").unwrap_or(&Json::U64(0)).as_u64().unwrap_or(0);
+                        let epoch_num = json_obj.get("EpochNum").unwrap_or(&Json::U64(0)).as_u64().unwrap();
+                        let force_restart = json_obj.get("ForceRestart").unwrap_or(&Json::Boolean(false)).as_boolean().unwrap();
                         match w.epochs.get_mut(& (epoch_num as u32))
                         {
                             Some(ref epoch_state) =>
                             {
                                 // Early break
-                                if (epoch_state.evaluated)
+                                if (epoch_state.evaluated && !force_restart)
                                 {
                                     trace!("Simulation Epoch Num: {} already simulated...returning", epoch_num);
                                     return
@@ -82,6 +83,12 @@ impl WorkerThreadActions
                             }
                             _ => 
                             {}
+                        }
+
+                        // Force restart
+                        if w.epochs.get_mut(&(epoch_num as u32)).is_some() && force_restart
+                        {
+                            w.epochs.remove(& (epoch_num as u32));
                         }
                     },
                     _ =>
