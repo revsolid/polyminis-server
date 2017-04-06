@@ -154,9 +154,6 @@ impl WorkerThreadActions
                 };
 
                 self.SimulationEpochLoop(&mut sim, sim_type, workspace, record_for_playback, record_for_database, simulation_data); 
-
-                trace!("Evaluating Species");
-                sim.get_epoch_mut().evaluate_species(); 
                 {
                     let mut w = workspace.write().unwrap();
                     let mut_epoch = w.epochs.get_mut(&(sim.epoch_num as u32)).unwrap();
@@ -374,6 +371,9 @@ impl WorkerThreadActions
                         break 'legacy_style;
                     }
                 }
+
+                trace!("Evaluating Species");
+                sim.get_epoch_mut().evaluate_species(); 
             },
             &_ =>
             {
