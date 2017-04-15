@@ -1,6 +1,9 @@
 use lru_cache::LruCache;
+
+use polyminis_core::environment::*;
 use polyminis_core::evaluation::*;
 use polyminis_core::genetics::*;
+use polyminis_core::physics::*;
 use polyminis_core::serialization::*;
 use polyminis_core::simulation::*;
 
@@ -65,11 +68,27 @@ impl WorkerThreadActions
                     &Json::Object(ref json_obj) =>
                     {
                         let mut w = workspace.write().unwrap();
-                        let epoch_num = json_obj.get("EpochNum").unwrap_or(&Json::U64(0)).as_u64().unwrap_or(0);
-                        if w.epochs.get_mut(& (epoch_num as u32)).is_some()
+                        let epoch_num = json_obj.get("EpochNum").unwrap_or(&Json::U64(0)).as_u64().unwrap();
+                        let force_restart = json_obj.get("ForceRestart").unwrap_or(&Json::Boolean(false)).as_boolean().unwrap();
+                        match w.epochs.get_mut(& (epoch_num as u32))
                         {
-                            // Early break
-                            return
+                            Some(ref epoch_state) =>
+                            {
+                                // Early break
+                                if (epoch_state.evaluated && !force_restart)
+                                {
+                                    trace!("Simulation Epoch Num: {} already simulated...returning", epoch_num);
+                                    return
+                                }
+                            }
+                            _ => 
+                            {}
+                        }
+
+                        // Force restart
+                        if w.epochs.get_mut(&(epoch_num as u32)).is_some() && force_restart
+                        {
+                            w.epochs.remove(& (epoch_num as u32));
                         }
                     },
                     _ =>
@@ -134,10 +153,7 @@ impl WorkerThreadActions
                     }
                 };
 
-                self.SimulationEpochLoop(&mut sim, sim_type, workspace, record_for_playback, record_for_database); 
-
-                trace!("Evaluating Species");
-                sim.get_epoch_mut().evaluate_species(); 
+                self.SimulationEpochLoop(&mut sim, sim_type, workspace, record_for_playback, record_for_database, simulation_data); 
                 {
                     let mut w = workspace.write().unwrap();
                     let mut_epoch = w.epochs.get_mut(&(sim.epoch_num as u32)).unwrap();
@@ -200,7 +216,9 @@ impl WorkerThreadActions
             }
         }
     }
-    fn SimulationEpochLoop(&self, sim: &mut Simulation, sim_type: String, workspace: &mut Arc<RwLock<WorkerThreadState>>, record_for_playback: bool, record_for_database: bool)
+    //fn SimulationEpochLoop(&self, sim: &mut Simulation, sim_type: String, workspace: &mut Arc<RwLock<WorkerThreadState>>, record_for_playback: bool, record_for_database: bool)
+    fn SimulationEpochLoop(&self, sim: &mut Simulation, sim_type: String, workspace: &mut Arc<RwLock<WorkerThreadState>>, record_for_playback: bool, record_for_database: bool,
+                           sim_data: &Json)
     {
         //let sim_type = "Legacy Style";
         trace!("Starting Simulation Epoch Loop - Type {}", sim_type); //TODO: Trace params
@@ -227,49 +245,79 @@ impl WorkerThreadActions
             {
                 // TODO: For now we'll be using the same setup for all runs,
                 // this should be parameterizable
-                let mut new_env = sim.get_epoch().get_environment().clone();
-                
-                new_env.add_static_object( (20.0, 10.0),  (10, 30));
-                new_env.add_static_object( (10.0, 20.0),  (30, 10));
+                let scenarios: Vec<(Environment, PGAConfig, Box<PlacementFunction>)> =
+                    match sim_data.as_object().unwrap().get("Scenarios")
+                    {
+                        Some(&Json::Array(ref scenarios_json)) =>
+                        {
+                            let ser_ctx = &mut SerializationCtx::new_from_flags(PolyminiSerializationFlags::PM_SF_DB);
+                            scenarios_json.iter().map(|ref scenario|
+                            {
+                                let scenario_object = scenario.as_object().unwrap();
+                                let env = Environment::new_from_json(scenario_object.get("Environment").unwrap()).unwrap();
+                                let pgaconfig = PGAConfig::new_from_json(scenario_object.get("GAConfiguration").unwrap(), ser_ctx).unwrap();
 
-                let evaluators = vec![ FitnessEvaluator::OverallMovement { weight: 0.5 },
-                                       FitnessEvaluator::DistanceTravelled { weight: 0.5 },
-                                       FitnessEvaluator::Alive { weight: 15.0 },
-                                       FitnessEvaluator::Shape { weight: 8.0 },
-                                       FitnessEvaluator::PositionsVisited { weight: 3.5 },
-                                     ];
+                                let low_x = scenario_object.get("StartingLowX").unwrap_or(&Json::Null).as_f64().unwrap_or(0.0) as f32;
+                                let low_y = scenario_object.get("StartingLowY").unwrap_or(&Json::Null).as_f64().unwrap_or(0.0) as f32;
+                                let high_x = scenario_object.get("StartingHighX").unwrap_or(&Json::Null).as_f64().unwrap_or(env.dimensions.0 as f64) as f32;
+                                let high_y = scenario_object.get("StartingHighY").unwrap_or(&Json::Null).as_f64().unwrap_or(env.dimensions.1 as f64) as f32;
+                                let placement_func: Box<PlacementFunction> = Box::new( move | ctx: &mut PolyminiRandomCtx |
+                                         {
+                                           ( (ctx.gen_range(low_x, high_x) as f32).floor(),
+                                             (ctx.gen_range(low_y, high_y) as f32).floor())
+                                         });
+                                (env,
+                                 pgaconfig,
+                                 placement_func)
+                            }).collect()
+                        },
+                        _ =>
+                        {
+                            let mut new_env = sim.get_epoch().get_environment().clone();
+                            
+                            let evaluators = vec![ FitnessEvaluator::OverallMovement { weight: 0.5 },
+                                                   FitnessEvaluator::DistanceTravelled { weight: 0.5 },
+                                                   FitnessEvaluator::Alive { weight: 15.0 },
+                                                   FitnessEvaluator::Shape { weight: 8.0 },
+                                                   FitnessEvaluator::PositionsVisited { weight: 3.5 },
+                                                 ];
 
-                let cfg = PGAConfig { population_size: 50,
-                                      percentage_elitism: 0.20, percentage_mutation: 0.3, fitness_evaluators: evaluators,
-                                      genome_size: 4 };
+                            let cfg = PGAConfig { population_size: 50,
+                                                  percentage_elitism: 0.20, percentage_mutation: 0.3, fitness_evaluators: evaluators,
+                                                  genome_size: 4, accumulates_over: true };
+
+                            vec![
+                                (new_env.clone(), cfg.clone(),
+                                 Box::new( | ctx: &mut PolyminiRandomCtx |
+                                 {
+                                   ( (ctx.gen_range(12.0, 18.0) as f32).floor(),
+                                     (ctx.gen_range(12.0, 18.0) as f32).floor())
+                                 })),
+                                (new_env.clone(), cfg.clone(),
+                                 Box::new( | ctx: &mut PolyminiRandomCtx |
+                                 {
+                                   ( (ctx.gen_range(32.0, 38.0) as f32).floor(),
+                                     (ctx.gen_range(32.0, 38.0) as f32).floor())
+                                 })),
+                                 (new_env.clone(), cfg.clone(),
+                                 Box::new( | ctx: &mut PolyminiRandomCtx |
+                                 {
+                                   ( (ctx.gen_range(12.0, 18.0) as f32).floor(),
+                                     (ctx.gen_range(32.0, 38.0) as f32).floor())
+                                 })),
+                                 (new_env.clone(), cfg.clone(),
+                                 Box::new( | ctx: &mut PolyminiRandomCtx |
+                                 {
+                                   ( (ctx.gen_range(32.0, 38.0) as f32).floor(),
+                                     (ctx.gen_range(12.0, 18.0) as f32).floor())
+                                 })),
+                             ]    
+                        }
+                    };
 
 
-                sim.get_epoch_mut().solo_run(&vec![
-                                    (new_env.clone(), cfg.clone(),
-                                     Box::new( | ctx: &mut PolyminiRandomCtx |
-                                     {
-                                       ( (ctx.gen_range(12.0, 18.0) as f32).floor(),
-                                         (ctx.gen_range(12.0, 18.0) as f32).floor())
-                                     })),
-                                    (new_env.clone(), cfg.clone(),
-                                     Box::new( | ctx: &mut PolyminiRandomCtx |
-                                     {
-                                       ( (ctx.gen_range(32.0, 38.0) as f32).floor(),
-                                         (ctx.gen_range(32.0, 38.0) as f32).floor())
-                                     })),
-                                     (new_env.clone(), cfg.clone(),
-                                     Box::new( | ctx: &mut PolyminiRandomCtx |
-                                     {
-                                       ( (ctx.gen_range(12.0, 18.0) as f32).floor(),
-                                         (ctx.gen_range(32.0, 38.0) as f32).floor())
-                                     })),
-                                     (new_env.clone(), cfg.clone(),
-                                     Box::new( | ctx: &mut PolyminiRandomCtx |
-                                     {
-                                       ( (ctx.gen_range(32.0, 38.0) as f32).floor(),
-                                         (ctx.gen_range(12.0, 18.0) as f32).floor())
-                                     })),
-                                     ]);
+                trace!("Solo Run includes {} scenarios", scenarios.len());
+                sim.get_epoch_mut().solo_run(&scenarios);
 
                 trace!("Done solo running");
             }, 
@@ -277,7 +325,27 @@ impl WorkerThreadActions
             // Creature Observation
             "Creature Observation" =>
             {
-                // This is basically 'legacy' style 
+                'creature_obs: loop
+                {
+                    let break_loop = sim.step();
+
+
+                    if record_for_playback
+                    {
+                        let step_json = sim.get_epoch().serialize(&mut SerializationCtx::new_from_flags(PolyminiSerializationFlags::PM_SF_DYNAMIC));
+                        {
+                            let mut w = workspace.write().unwrap();
+                            w.epochs.get_mut(&(sim.epoch_num as u32)).unwrap().steps.push(step_json);
+                        }
+                    }
+
+                    if break_loop
+                    {
+                        trace!("Ending Simulation");
+                        break 'creature_obs;
+                    }
+                }
+
             },
 
             // Legacy Sytle 
@@ -303,6 +371,9 @@ impl WorkerThreadActions
                         break 'legacy_style;
                     }
                 }
+
+                trace!("Evaluating Species");
+                sim.get_epoch_mut().evaluate_species(); 
             },
             &_ =>
             {
