@@ -3,7 +3,8 @@ name = "polyminis-server"
 version = "0.1.0"
 authors = ["Ricardo Sisnett<sisnett@polyminis.com>"]
 
-polyminis-core = { path = "polyminis-core" }
+[dependencies]
+polyminis-core = { git = "https://github.com/mrjackinc/polyminis-core" }
 
 env_logger = "0.3.2"
 lru-cache = "0.1.0"
