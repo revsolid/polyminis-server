@@ -6,6 +6,7 @@ use polyminis_core::genetics::*;
 use polyminis_core::physics::*;
 use polyminis_core::serialization::*;
 use polyminis_core::simulation::*;
+use polyminis_core::uuid::*;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, RwLock};
@@ -251,10 +252,16 @@ impl WorkerThreadActions
                         Some(&Json::Array(ref scenarios_json)) =>
                         {
                             let ser_ctx = &mut SerializationCtx::new_from_flags(PolyminiSerializationFlags::PM_SF_DB);
+                            let rand_ctx = &mut PolyminiRandomCtx::from_seed([
+                                PolyminiUUIDCtx::next() as u32,
+                                PolyminiUUIDCtx::next() as u32,
+                                1,
+                                1
+                            ], "Environment Creation".to_owned());
                             scenarios_json.iter().map(|ref scenario|
                             {
                                 let scenario_object = scenario.as_object().unwrap();
-                                let env = Environment::new_from_json(scenario_object.get("Environment").unwrap()).unwrap();
+                                let env = Environment::new_from_json(scenario_object.get("Environment").unwrap(), rand_ctx).unwrap();
                                 let pgaconfig = PGAConfig::new_from_json(scenario_object.get("GAConfiguration").unwrap(), ser_ctx).unwrap();
 
                                 let low_x = scenario_object.get("StartingLowX").unwrap_or(&Json::Null).as_f64().unwrap_or(0.0) as f32;
